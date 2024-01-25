@@ -21,6 +21,7 @@ type (
 		FlushInterval time.Duration
 		PushTimeout   time.Duration
 		FlushTimeout  time.Duration
+		ClearTimeout  time.Duration
 		CloseTimeout  time.Duration
 	}
 
@@ -63,7 +64,14 @@ func WithFlushTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithCloseTimeout sets how long
+// WithClearTimeout sets how long a clear should wait before giving up.
+func WithClearTimeout(timeout time.Duration) Option {
+	return func(options *Options) {
+		options.ClearTimeout = timeout
+	}
+}
+
+// WithCloseTimeout sets how long a close should wait before giving up.
 func WithCloseTimeout(timeout time.Duration) Option {
 	return func(options *Options) {
 		options.CloseTimeout = timeout
@@ -100,6 +108,7 @@ func resolveOptions(opts ...Option) *Options {
 		FlushInterval: 0,
 		PushTimeout:   time.Second,
 		FlushTimeout:  time.Second,
+		ClearTimeout:  time.Second,
 		CloseTimeout:  time.Second,
 	}
 

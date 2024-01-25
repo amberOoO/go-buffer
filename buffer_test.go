@@ -236,6 +236,61 @@ var _ = Describe("Buffer", func() {
 		})
 	})
 
+	Context("Clearing", func() {
+		It("clears the buffer when Clear is called", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(3),
+				buffer.WithFlusher(flusher),
+			)
+
+			// act
+			_ = sut.Push(1)
+			time.Sleep(time.Second)
+			
+			err := sut.Clear()
+			time.Sleep(time.Second)
+
+			// assert
+			Expect(err).To(Succeed())
+			Expect(sut.Count()).To(Equal(0))
+		})
+
+		It("fails when Clear cannot execute in a timely fashion", func() {
+			// arrange
+			flusher.Func = func() { time.Sleep(2 * time.Second) }
+
+			sut := buffer.New(
+				buffer.WithSize(1),
+				buffer.WithFlusher(flusher),
+				buffer.WithClearTimeout(time.Second * 2),
+				buffer.WithFlushTimeout(time.Second*5),
+			)
+			_ = sut.Push(1)
+
+			// act
+			err := sut.Clear()
+
+			// assert
+			Expect(err).To(MatchError(buffer.ErrTimeout))
+		})
+
+		It("fails when the buffer is closed", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(1),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Close()
+
+			// act
+			err := sut.Clear()
+
+			// assert
+			Expect(err).To(MatchError(buffer.ErrClosed))
+		})
+	})
+
 	Context("Closing", func() {
 		It("flushes the buffer and closes it when Close is called", func(done Done) {
 			// arrange
@@ -311,6 +366,91 @@ var _ = Describe("Buffer", func() {
 			// assert
 			Expect(err1).To(MatchError(buffer.ErrTimeout))
 			Expect(err2).To(Succeed())
+		})
+	})
+
+	Context("Existance", func() {
+		It("returns true when the item exists in the buffer", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(2),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Push(1)
+
+			// act
+			exists, err := sut.Exists(1)
+
+			// assert
+			Expect(err).To(Succeed())
+			Expect(exists).To(BeTrue())
+		})
+
+		It("returns false when the item does not exist in the buffer", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(2),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Push(1)
+
+			// act
+			exists, err := sut.Exists(2)
+
+			// assert
+			Expect(err).To(Succeed())
+			Expect(exists).To(BeFalse())
+		})
+
+		It("fails when the buffer is closed", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(2),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Push(1)
+			_ = sut.Close()
+
+			// act
+			_, err := sut.Exists(1)
+
+			// assert
+			Expect(err).To(MatchError(buffer.ErrClosed))
+		})
+	})
+
+	Context("Counting", func() {
+		It("returns the number of items in the buffer", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(3),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Push(1)
+			_ = sut.Push(2)
+			// act
+			time.Sleep(time.Second)
+			count, err := sut.Count()
+
+			// assert
+			Expect(err).To(Succeed())
+			Expect(count).To(Equal(2))
+		})
+
+		It("fails when the buffer is closed", func() {
+			// arrange
+			sut := buffer.New(
+				buffer.WithSize(2),
+				buffer.WithFlusher(flusher),
+			)
+			_ = sut.Push(1)
+			_ = sut.Close()
+
+			// act
+			_, err := sut.Count()
+
+			// assert
+			Expect(err).To(MatchError(buffer.ErrClosed))
 		})
 	})
 })

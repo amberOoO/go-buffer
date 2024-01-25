@@ -19,8 +19,19 @@ type (
 		io.Closer
 		dataCh  chan interface{}
 		flushCh chan struct{}
+		clearCh chan struct{}
 		closeCh chan struct{}
 		doneCh  chan struct{}
+
+		// buffer to store items and map to help quick search items
+		items         []interface{}
+		itemsQueryMap map[interface{}]struct{}
+		count         int
+
+		// ticker
+		ticker     <-chan time.Time
+		stopTicker func()
+
 		options *Options
 	}
 )
@@ -59,6 +70,22 @@ func (buffer *Buffer) Flush() error {
 	}
 }
 
+// Clear clears the buffer.
+//
+// It returns an ErrClosed if the buffer has been closed.
+func (buffer *Buffer) Clear() error {
+	if buffer.closed() {
+		return ErrClosed
+	}
+
+	select {
+	case buffer.clearCh <- struct{}{}:
+		return nil
+	case <-time.After(buffer.options.ClearTimeout):
+		return ErrTimeout
+	}
+}
+
 // Close flushes the buffer and prevents it from being further used.
 //
 // It returns an ErrTimeout if if cannot be performed in a timely fashion, and
@@ -90,6 +117,29 @@ func (buffer *Buffer) Close() error {
 	}
 }
 
+// Count returns the number of items in the buffer.
+//
+// It returns an ErrClosed if the buffer has been closed.
+func (buffer *Buffer) Count() (int, error) {
+	if buffer.closed() {
+		return 0, ErrClosed
+	}
+
+	return buffer.count, nil
+}
+
+// Exists checks if an item exists in the buffer.
+//
+// It returns an ErrClosed if the buffer has been closed.
+func (buffer *Buffer) Exists(item interface{}) (bool, error) {
+	if buffer.closed() {
+		return false, ErrClosed
+	}
+
+	_, ok := buffer.itemsQueryMap[item]
+	return ok, nil
+}
+
 func (buffer Buffer) closed() bool {
 	select {
 	case <-buffer.doneCh:
@@ -100,40 +150,50 @@ func (buffer Buffer) closed() bool {
 }
 
 func (buffer *Buffer) consume() {
-	count := 0
-	items := make([]interface{}, buffer.options.Size)
 	mustFlush := false
-	ticker, stopTicker := newTicker(buffer.options.FlushInterval)
+	buffer.ticker, buffer.stopTicker = newTicker(buffer.options.FlushInterval)
 
 	isOpen := true
 	for isOpen {
 		select {
 		case item := <-buffer.dataCh:
-			items[count] = item
-			count++
-			mustFlush = count >= len(items)
-		case <-ticker:
-			mustFlush = count > 0
+			buffer.items[buffer.count] = item
+			buffer.itemsQueryMap[item] = struct{}{}
+			buffer.count++
+			mustFlush = buffer.count >= len(buffer.items)
+		case <-buffer.ticker:
+			mustFlush = buffer.count > 0
+		case <-buffer.clearCh:
+			buffer.stopTicker()
+			buffer.resetItems()
+			mustFlush = false
+			buffer.ticker, buffer.stopTicker = newTicker(buffer.options.FlushInterval)
 		case <-buffer.flushCh:
-			mustFlush = count > 0
+			mustFlush = buffer.count > 0
 		case <-buffer.closeCh:
 			isOpen = false
-			mustFlush = count > 0
+			mustFlush = buffer.count > 0
 		}
 
 		if mustFlush {
-			stopTicker()
-			buffer.options.Flusher.Write(items[:count])
+			buffer.stopTicker()
+			buffer.options.Flusher.Write(buffer.items[:buffer.count])
 
-			count = 0
-			items = make([]interface{}, buffer.options.Size)
+			buffer.resetItems()
 			mustFlush = false
-			ticker, stopTicker = newTicker(buffer.options.FlushInterval)
+
+			buffer.ticker, buffer.stopTicker = newTicker(buffer.options.FlushInterval)
 		}
 	}
 
-	stopTicker()
+	buffer.stopTicker()
 	close(buffer.doneCh)
+}
+
+func (buffer *Buffer) resetItems() {
+	buffer.count = 0
+	buffer.items = make([]interface{}, buffer.options.Size)
+	buffer.itemsQueryMap = make(map[interface{}]struct{})
 }
 
 func newTicker(interval time.Duration) (<-chan time.Time, func()) {
@@ -150,10 +210,16 @@ func New(opts ...Option) *Buffer {
 	buffer := &Buffer{
 		dataCh:  make(chan interface{}),
 		flushCh: make(chan struct{}),
+		clearCh: make(chan struct{}),
 		closeCh: make(chan struct{}),
 		doneCh:  make(chan struct{}),
 		options: resolveOptions(opts...),
 	}
+
+	// init itemBuffer and quickSearchMap
+	buffer.items = make([]interface{}, buffer.options.Size)
+	buffer.itemsQueryMap = make(map[interface{}]struct{})
+
 	go buffer.consume()
 
 	return buffer
