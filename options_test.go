@@ -55,6 +55,17 @@ var _ = Describe("Options", func() {
 		Expect(opts.PushTimeout).To(Equal(10 * time.Second))
 	})
 
+	It("sets up clear timeout", func() {
+		// arrange
+		opts := &buffer.Options{}
+
+		// act
+		buffer.WithClearTimeout(2 * time.Second)(opts)
+
+		// assert
+		Expect(opts.ClearTimeout).To(Equal(2 * time.Second))
+	})
+
 	It("sets up flush timeout", func() {
 		// arrange
 		opts := &buffer.Options{}
